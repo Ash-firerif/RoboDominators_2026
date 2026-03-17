@@ -1,7 +1,9 @@
 package frc.robot;
 
 import edu.wpi.first.wpilibj.RobotController;
+import edu.wpi.first.wpilibj.Watchdog;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.IterativeRobotBase;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import org.littletonrobotics.junction.LoggedRobot;
@@ -9,6 +11,7 @@ import org.littletonrobotics.junction.Logger;
 import org.littletonrobotics.junction.networktables.NT4Publisher;
 import org.littletonrobotics.junction.wpilog.WPILOGWriter;
 import frc.robot.util.SmartLogger;
+import java.lang.reflect.Field;
 import edu.wpi.first.cameraserver.CameraServer;
 import edu.wpi.first.cscore.HttpCamera;
 import edu.wpi.first.cscore.MjpegServer;
@@ -30,6 +33,9 @@ public class Robot extends LoggedRobot {
   private double cachedBatteryVoltage = 0.0; // Cache to avoid multiple reads per loop
   private boolean lastBrownout = false;
 
+      
+
+
   // Runs ONCE at robot boot - setup logging and create subsystems
   @Override
   public void robotInit() {
@@ -46,7 +52,18 @@ public class Robot extends LoggedRobot {
     Logger.addDataReceiver(new NT4Publisher());
     Logger.addDataReceiver(new WPILOGWriter("/home/lvuser/logs"));
     Logger.start();
-    
+
+    //Code to disable loop overrun warnings less than 0.02 seconds
+    try {
+      Field watchdogField = IterativeRobotBase.class.getDeclaredField("m_watchdog");
+      watchdogField.setAccessible(true);
+      Watchdog watchdog = (Watchdog) watchdogField.get(this);
+      watchdog.setTimeout(0.02);
+    } catch (Exception e) {
+      DriverStation.reportWarning("Failed to disable loop overrun warnings.", false);
+    }
+    CommandScheduler.getInstance().setPeriod(0.02);
+
     String initMsg = projectName + " " + teamNumber + " - " + robotName + "\n" 
                     + "AdvantageKit: ACTIVE\n" + 
                     "Battery: " + RobotController.getBatteryVoltage() + "V";
