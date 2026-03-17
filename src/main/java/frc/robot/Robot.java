@@ -40,6 +40,7 @@ public class Robot extends LoggedRobot {
   @Override
   public void robotInit() {
     //test push
+    //test push 2
     CanBridge.runTCP(); // allows GrappleHook to connect for LaserCAN tuning
     com.ctre.phoenix6.SignalLogger.stop(); // .hoot files not needed — AKit .wpilog is our log format
     String projectName = "RoboDominators_2026";
