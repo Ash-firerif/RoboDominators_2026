@@ -46,6 +46,7 @@ import frc.robot.commands.util.SetStartingPoseCommand;
 import frc.robot.subsystems.*;
 import frc.robot.subsystems.turret.TurretIOCTRE;
 import frc.robot.subsystems.turret.TurretSubsystem;
+import frc.robot.subsystems.turret.TurretSubsystem;
 import frc.robot.subsystems.turret.TurretAimPipeline;
 import frc.robot.subsystems.turret.TurretAimSolver;
 import frc.robot.subsystems.turret.TurretTargetSelector;
@@ -90,6 +91,7 @@ public class RobotContainer {
   final TagVisionSubsystem tagVisionSubsystem;
   public final LEDSubsystem ledSubsystem;
   TurretSubsystem turretSubsystem;
+  TurretSubsystem turretSubsystem2;
   IntakeSubsystem intakeSubsystem;
   ClimberSubsystem climberSubsystem;
   SpindexerSubsystem spindexerSubsystem;
@@ -132,6 +134,7 @@ public class RobotContainer {
     tagVisionSubsystem = new TagVisionSubsystem(poseEstimator);
     ledSubsystem = new LEDSubsystem(this.robotState);
     turretSubsystem = ENABLE_TURRET ? new TurretSubsystem(this.robotState, new TurretIOCTRE()) : null;
+    turretSubsystem2 = ENABLE_TURRET ? new TurretSubsystem(this.robotState, new TurretIOCTRE()) : null;
     intakeSubsystem = ENABLE_INTAKE ? new IntakeSubsystem(this.robotState) : null;
     if (intakeSubsystem != null) {
       // No auto-start on extend — rollers only run while B is held.
@@ -165,22 +168,17 @@ public class RobotContainer {
             }
             if (robotState.isFlywheelOn()) {
               double frontRps, backRps;
-              if (turretSubsystem.isManualFlywheelOverride()) {
-                // LB/RB stepped value — use directly, ignoring aim goal
-                frontRps = turretSubsystem.getManualFlywheelFrontRps();
-                backRps  = frontRps * Constants.Turret.FLYWHEEL_BACK_RATIO;
-              } else {
-                frontRps = turretSubsystem.getAimGoalFrontRps();
-                backRps  = turretSubsystem.getAimGoalBackRps();
-                if (frontRps <= 0.0) frontRps = Constants.Turret.FLYWHEEL_WARMUP_FRONT_RPS;
-                if (backRps  <= 0.0) backRps  = Constants.Turret.FLYWHEEL_WARMUP_BACK_RPS;
-                frontRps *= Constants.Turret.FLYWHEEL_RPS_SCALE;
-                backRps  *= Constants.Turret.FLYWHEEL_RPS_SCALE;
-              }
+              frontRps = turretSubsystem.getAimGoalFrontRps();
+              backRps  = turretSubsystem.getAimGoalBackRps();
+              if (frontRps <= 0.0) frontRps = Constants.Turret.FLYWHEEL_WARMUP_FRONT_RPS;
+              if (backRps  <= 0.0) backRps  = Constants.Turret.FLYWHEEL_WARMUP_BACK_RPS;
+              frontRps *= Constants.Turret.FLYWHEEL_RPS_SCALE;
+              backRps  *= Constants.Turret.FLYWHEEL_RPS_SCALE;
+              
               turretSubsystem.setFlywheelFrontRps(frontRps);
               turretSubsystem.setFlywheelBackRps(backRps);
             } else {
-              turretSubsystem.setFlywheelPercent(0.0);
+              turretSubsystem.stopFlywheel();
             }
           }, turretSubsystem)
               .beforeStarting(() -> aimSolver.resetLatch())
@@ -219,7 +217,6 @@ public class RobotContainer {
     configurePathPlanner();
     AutoCommands.register(intakeSubsystem, turretSubsystem, spindexerSubsystem, singulatorSubsystem, climberSubsystem, robotState);
     configureDefaultCommands();
-    configureAlwaysActiveBindings(); // D-pad, RPS step — never gated by lockout
     if (Constants.Turret.REQUIRE_TURRET_FORWARD_CONFIRM) {
       SmartLogger.logConsole("Waiting for turret forward confirm (LB+RB) before enabling controls", "Homing");
       // LB+RB: confirm turret is forward, then activate all controls.
@@ -448,62 +445,6 @@ public class RobotContainer {
     // --- END INTAKE ---
 
     // --- TURRET FLYWHEELS + SHOOT ---
-    Trigger flywheelReady = new Trigger(() ->
-        turretSubsystem != null && turretSubsystem.isFlywheelSpinningFast())
-        .debounce(0.1, DebounceType.kFalling);
-
-    // LT (press): toggle flywheels on/off.
-    // In SEQUENCED_SHOOTING_TESTING_MODE, also starts/stops the burst sequence (one ball every 4s).
-    new Trigger(() -> operatorController.getLeftTriggerAxis() > 0.5)
-        .onTrue(Commands.runOnce(() -> {
-          if (turretSubsystem == null) return;
-          robotState.setFlywheelOn(!robotState.isFlywheelOn());
-          if (!robotState.isFlywheelOn()) turretSubsystem.setFlywheelPercent(0.0);
-        }));
-
-    // Operator left stick press: toggle sequenced shooting mode on/off at runtime.
-    new JoystickButton(operatorController, XboxController.Button.kLeftStick.value)
-        .onTrue(Commands.runOnce(() -> {
-          boolean nowOn = !robotState.isSequencedShootingMode();
-          robotState.setSequencedShootingMode(nowOn);
-          SmartLogger.logConsole("Sequenced shooting mode: " + (nowOn ? "ON" : "OFF"), "Turret");
-        }));
-
-    // While flywheels AND sequenced mode are on: fire one ball every 4 seconds.
-    new Trigger(() -> robotState.isFlywheelOn() && robotState.isSequencedShootingMode())
-        .whileTrue(Commands.repeatingSequence(
-              Commands.waitUntil(() -> flywheelReady.getAsBoolean()),
-              Commands.runOnce(() -> {
-                // Stop first to reset state flags, then start — avoids early-return guard in spinForward
-                if (spindexerSubsystem  != null) spindexerSubsystem.stop();
-                if (singulatorSubsystem != null) singulatorSubsystem.pause();
-              }),
-              Commands.runOnce(() -> {
-                if (spindexerSubsystem  != null) spindexerSubsystem.spinForward();
-                if (singulatorSubsystem != null) singulatorSubsystem.primeAndFeed();
-              }),
-              Commands.waitSeconds(0.5),
-              Commands.runOnce(() -> {
-                if (spindexerSubsystem  != null) spindexerSubsystem.stop();
-                if (singulatorSubsystem != null) singulatorSubsystem.pause();
-              }),
-              Commands.waitSeconds(3.5)
-          ).finallyDo(() -> {
-            if (spindexerSubsystem  != null) spindexerSubsystem.stop();
-            if (singulatorSubsystem != null) singulatorSubsystem.pause();
-          }));
-
-    // LB / RB: step manual flywheel RPS down / up by FLYWHEEL_MANUAL_STEP_RPS.
-    // Back RPS is set automatically as front * FLYWHEEL_BACK_RATIO.
-    // Use during calibration to find the right speed for a new shot table entry —
-    // read Turret/ManualFlywheelFrontRps in AScope to record the value.
-    // Guard: only fire when the OTHER bumper is NOT held, so LB+RB chord still works as lockout confirm.
-    new JoystickButton(operatorController, XboxController.Button.kLeftBumper.value)
-        .and(() -> !operatorController.getRightBumperButton())
-        .onTrue(Commands.runOnce(() -> { if (turretSubsystem != null) turretSubsystem.stepManualFlywheelRps(false); }));
-    new JoystickButton(operatorController, XboxController.Button.kRightBumper.value)
-        .and(() -> !operatorController.getLeftBumperButton())
-        .onTrue(Commands.runOnce(() -> { if (turretSubsystem != null) turretSubsystem.stepManualFlywheelRps(true); }));
 
     // RT (hold): shoot continuously.
     // Flywheels spin up on press, feed starts once up to speed, stops + flywheels off on release.
@@ -521,31 +462,18 @@ public class RobotContainer {
           if (spindexerSubsystem  != null) spindexerSubsystem.stop();
           if (singulatorSubsystem != null) singulatorSubsystem.pause();
           robotState.setFlywheelOn(false);
-          if (turretSubsystem != null) turretSubsystem.setFlywheelPercent(0.0);
+          if (turretSubsystem != null) turretSubsystem.stopAll();
         }));
     // --- END TURRET FLYWHEELS + SHOOT ---
 
-    // --- TURRET ROTATION ---
-    // --- END TURRET ROTATION ---
-
-    // --- TURRET HOOD ---
-    // --- END TURRET HOOD ---
-
     // ========== END OPERATOR CONTROLLER BINDINGS ==========
 
-    // Back+Start: emergency re-home — use when turret homing is bad from startup.
-    // Manually rotate turret to forward with D-pad L/R first, then press both together.
-    new Trigger(() -> operatorController.getBackButton() && operatorController.getStartButton())
-        .onTrue(Commands.runOnce(() -> {
-          if (turretSubsystem != null) turretSubsystem.home();
-          SmartLogger.logConsole("Emergency turret re-home triggered (Back+Start) — hall sweep", "Homing");
-        }));
 
     // ========== MODE TRIGGERS ==========
 
     // #2: Replace onTeleopInit() logic — auto-enable tracking if turret was already homed in auto
     RobotModeTriggers.teleop().onTrue(Commands.runOnce(() -> {
-      if (turretSubsystem != null && turretSubsystem.isHomed()
+      if (turretSubsystem != null
           && !turretSubsystem.isTrackingEnabled()) {
         turretSubsystem.enableTracking();
         SmartLogger.logConsole("Tracking auto-enabled on teleop init (homed in auto)", "Turret");
@@ -555,44 +483,8 @@ public class RobotContainer {
     // #3: Reset flywheel state cleanly when disabled so no stale on/off state carries into next match
     RobotModeTriggers.disabled().onTrue(Commands.runOnce(() -> {
       robotState.setFlywheelOn(false);
-      if (turretSubsystem != null) turretSubsystem.setFlywheelPercent(0.0);
+      if (turretSubsystem != null) turretSubsystem.stopFlywheel();
     }).ignoringDisable(true));
-  }
-
-  // Bindings that are always active regardless of lockout state.
-  // Turret/hood D-pad jog and flywheel RPS stepping go here — needed before and after lockout confirm.
-  private void configureAlwaysActiveBindings() {
-    // D-pad left/right (hold): jog turret open-loop. On release, snaps to PID hold at current position.
-    // Requires turretSubsystem so it interrupts the default tracking command while held.
-    // No-op until turret is homed.
-    new Trigger(() -> operatorController.getPOV() == 270)
-        .and(() -> turretSubsystem != null && turretSubsystem.isHomed())
-        .whileTrue(Commands.runEnd(
-          () -> { turretSubsystem.setManualOverride(true); turretSubsystem.setTurretPercent(-0.04); },
-          () -> { turretSubsystem.setTurretPercent(0.0); turretSubsystem.snapTurretToCurrentPosition(); },
-          turretSubsystem));
-    new Trigger(() -> operatorController.getPOV() == 90)
-        .and(() -> turretSubsystem != null && turretSubsystem.isHomed())
-        .whileTrue(Commands.runEnd(
-          () -> { turretSubsystem.setManualOverride(true); turretSubsystem.setTurretPercent(0.04); },
-          () -> { turretSubsystem.setTurretPercent(0.0); turretSubsystem.snapTurretToCurrentPosition(); },
-          turretSubsystem));
-
-    // D-pad up/down: step hood position. Sets manualHoodOverride persistently so aim solver
-    // doesn't overwrite it. Override clears when tracking is re-enabled (e.g. LT toggle).
-    // No-op until hood is homed.
-    new Trigger(() -> operatorController.getPOV() == 0)
-        .and(() -> turretSubsystem != null && turretSubsystem.isHoodHomed())
-        .onTrue(Commands.runOnce(() -> {
-          turretSubsystem.setManualHoodOverride(true);
-          turretSubsystem.hoodStepUp();
-        }, turretSubsystem));
-    new Trigger(() -> operatorController.getPOV() == 180)
-        .and(() -> turretSubsystem != null && turretSubsystem.isHoodHomed())
-        .onTrue(Commands.runOnce(() -> {
-          turretSubsystem.setManualHoodOverride(true);
-          turretSubsystem.hoodStepDown();
-        }, turretSubsystem));
   }
 
   // HTML touchscreen interface
@@ -637,7 +529,7 @@ public class RobotContainer {
       // Disable tracking so the default command stops overwriting the emergency setpoints every loop.
       if (turretSubsystem != null) {
         turretSubsystem.disableTracking();
-        turretSubsystem.activateEmergencyHubClose();
+        //turretSubsystem.activateEmergencyHubClose();TODO implement this
       }
     } else {
       // Re-enable tracking when emergency mode is cleared.

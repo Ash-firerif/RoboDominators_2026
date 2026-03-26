@@ -42,12 +42,11 @@ public class ShootInPlaceRightAccurateAuto extends SequentialCommandGroup {
 
         // Wait for flywheels to reach 95% of target speed before feeding.
         // 4s timeout backstop so auto never hangs if flywheel fails to spin up.
-        Commands.waitUntil(() -> turret.isFlywheelSpinningFast())
+        Commands.waitUntil(() -> turret.isReadyToShoot())
             .withTimeout(4.0),
 
         // Start the feed chain
         Commands.runOnce(() -> {
-          turret.enableFire();
           spindexer.spinForward();
           singulator.primeAndFeed();
         }, spindexer, singulator),
@@ -57,8 +56,7 @@ public class ShootInPlaceRightAccurateAuto extends SequentialCommandGroup {
 
         // Stop everything
         Commands.runOnce(() -> {
-          turret.disableFire();
-          turret.setFlywheelPercent(0.0);
+          turret.stopFlywheel();
           robotState.setFlywheelOn(false);
           spindexer.stop();
           singulator.pause();

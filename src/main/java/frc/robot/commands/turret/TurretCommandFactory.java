@@ -14,14 +14,6 @@ public class TurretCommandFactory {
     this.turretSubsystem = turretSubsystem;
   }
 
-  public Command openLoop(double flywheelPercent, double hoodPercent, double turretPercent) {
-    return new TurretOpenLoopCommand(
-        turretSubsystem,
-        flywheelPercent,
-        hoodPercent,
-        turretPercent);
-  }
-
   public Command aimWithSupplier(Supplier<TurretAimGoal> goalSupplier) {
     return new TurretAimCommand(turretSubsystem, goalSupplier);
   }

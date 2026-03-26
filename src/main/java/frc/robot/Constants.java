@@ -454,7 +454,7 @@ public final class Constants {
     public static final double HOOD_HOMING_STALL_CURRENT_AMPS  = 10.0;
     public static final int    HOOD_HOMING_STALL_LOOP_THRESHOLD = 6;   // ~120ms at 50Hz
     public static final double HOOD_SOFT_LIMIT_TOP_ROTATIONS = 4.69; // measured 2026-03-08 with new gearing (was 4.1)
-
+    public static final double HOOD_HOMING_VOLTS = 0;
     // Phase-advance enablement — change to advance to the next phase
     // PHASE_1: fixed/manual setpoint, fire interlock only
     // PHASE_2: turret tracks target, robot must be near-stationary to fire

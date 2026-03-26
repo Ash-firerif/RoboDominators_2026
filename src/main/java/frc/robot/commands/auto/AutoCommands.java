@@ -65,13 +65,11 @@ public final class AutoCommands {
         // and must not interrupt the tracking default command.
         if (turret != null && spindexer != null && singulator != null) {
             NamedCommands.registerCommand("ShootStart", Commands.runOnce(() -> {
-                turret.enableFire();
                 spindexer.spinForward();
                 singulator.primeAndFeed();
             }, spindexer, singulator));
 
             NamedCommands.registerCommand("ShootStop", Commands.runOnce(() -> {
-                turret.disableFire();
                 spindexer.stop();
                 singulator.pause();
             }, spindexer, singulator));
@@ -90,7 +88,7 @@ public final class AutoCommands {
             }, turret));
 
             NamedCommands.registerCommand("FlywheelsOff", Commands.runOnce(() ->
-                turret.setFlywheelPercent(0.0), turret));
+                turret.stopFlywheel(), turret));
         }
 
         // --- Meta commands (combinations for simple autos) ---
@@ -111,7 +109,6 @@ public final class AutoCommands {
         // Does not require turret — avoids interrupting the tracking default command.
         if (turret != null && spindexer != null && singulator != null) {
             NamedCommands.registerCommand("AutoShootEnd", Commands.runOnce(() -> {
-                turret.disableFire();
                 robotState.setFlywheelOn(false);
                 spindexer.stop();
                 singulator.pause();
