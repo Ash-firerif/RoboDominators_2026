@@ -1,6 +1,7 @@
 package frc.robot;
 
 import edu.wpi.first.wpilibj.RobotController;
+import edu.wpi.first.wpilibj.Watchdog;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.IterativeRobotBase;
 import edu.wpi.first.wpilibj.Timer;
@@ -19,6 +20,7 @@ import org.littletonrobotics.junction.wpilog.WPILOGWriter;
 import com.revrobotics.util.StatusLogger;
 
 import frc.robot.util.SmartLogger;
+import java.lang.reflect.Field;
 import edu.wpi.first.cameraserver.CameraServer;
 import edu.wpi.first.cscore.HttpCamera;
 import edu.wpi.first.cscore.MjpegServer;
@@ -43,6 +45,9 @@ public class Robot extends LoggedRobot {
   
   private double cachedBatteryVoltage = 0.0; // Cache to avoid multiple reads per loop
   private boolean lastBrownout = false;
+
+      
+
 
   // Runs ONCE at robot boot - setup logging and create subsystems
   @Override
