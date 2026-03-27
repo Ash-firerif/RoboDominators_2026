@@ -6,6 +6,7 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants;
 import frc.robot.subsystems.turret.hood.HoodIO.HoodIOOutputMode;
 import frc.robot.subsystems.turret.hood.HoodIO.HoodIOOutputs;
+
 import org.littletonrobotics.junction.AutoLogOutput;
 import org.littletonrobotics.junction.Logger;
 
@@ -70,7 +71,8 @@ public class Hood extends SubsystemBase {
       }
     }
 
-    Logger.recordOutput("Hood/GoalAngleRots",goalAngle);
+    Logger.recordOutput("Hood/Homing", homing);
+    Logger.recordOutput("Hood/GoalAngleRots", goalAngle);
     io.applyOutputs(outputs);
   }
 }

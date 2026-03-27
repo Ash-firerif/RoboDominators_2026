@@ -5,6 +5,7 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants;
 import frc.robot.subsystems.turret.flywheel.FlywheelIO.FlywheelIOOutputMode;
 import frc.robot.subsystems.turret.flywheel.FlywheelIO.FlywheelIOOutputs;
+
 import org.littletonrobotics.junction.AutoLogOutput;
 import org.littletonrobotics.junction.Logger;
 
@@ -28,11 +29,11 @@ public class Flywheel extends SubsystemBase {
   public void periodic() {
     io.updateInputs(inputs);
     Logger.processInputs("Flywheel",inputs);
-    outputs.frontVelocityRPS = 0;
-    outputs.backVelocityRPS = 0;
-    outputs.mode = FlywheelIOOutputMode.VELOCITY;
+    //outputs.frontVelocityRPS = 0;
+    //outputs.backVelocityRPS = 0;
+    //outputs.mode = FlywheelIOOutputMode.VELOCITY;
 
-    Logger.recordOutput("Flywheel/OnTarget",isFlywheelOnTarget());
+    Logger.recordOutput("Flywheel/OnTarget", isFlywheelOnTarget());
     io.applyOutputs(outputs);
   }
 }

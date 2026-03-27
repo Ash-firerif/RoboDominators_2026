@@ -375,6 +375,7 @@ public final class Constants {
     // is active, snap the MM target to current position to stop fighting (and whistling).
     // 2.5s > worst-case full-range move (~1.7s) so healthy moves never trigger this.
     public static final double TURRET_STALL_TIMEOUT_SECS         = 2.5;
+    public static final double TURRET_STALL_LOOP_THRESHOLD = 10;
     public static final double TURRET_STALL_VELOCITY_THRESHOLD_RPS = 0.3; // motor RPS — "not moving"
     public static final double TURRET_STALL_ERROR_THRESHOLD_ROT    = 0.15; // motor rot — "not on target"
 
@@ -520,7 +521,7 @@ public final class Constants {
     // For Phase 4 (8 balls/sec): keep at 0 — at 125ms/ball there is no time budget for settle confirmation.
     // The lead comp is the accuracy mechanism, not settle gating.
     // For Phase 2/3 (stationary or decel): set to 3-5 loops (60-100ms) to avoid feeding mid-slew.
-    public static final int TURRET_ON_TARGET_SETTLE_LOOPS = 0;
+    public static final int TURRET_ON_TARGET_SETTLE_LOOPS = 1;
 
     // Shooter geometry:
     // Two hex shafts (front roller and top/back roller) separated by a fixed distance.
