@@ -29,7 +29,6 @@ public class Hood extends SubsystemBase {
     return error < Constants.Turret.HOOD_ON_TARGET_TOLERANCE_ROT;
   }
 
-  // Commands hood to a specific position
   public void setTarget(double rotations) {
     goalAngle = rotations;
   }
@@ -39,23 +38,35 @@ public class Hood extends SubsystemBase {
     return inputs.positionRots + offset;
   }
 
+  public void homeHood(){
+    homing = true;
+  }
+
   public void periodic() {
     io.updateInputs(inputs);
     Logger.processInputs("Hood",inputs);
+    
+    //default to pos pid
     if(!homing){
       outputs.positionRots = MathUtil.clamp(goalAngle, 0, Constants.Turret.HOOD_SOFT_LIMIT_TOP_ROTATIONS) - offset;
-      outputs.mode = HoodIOOutputMode.BRAKE;
-    } else {
+      outputs.mode = HoodIOOutputMode.CLOSED_LOOP;
+    }
+    //homing routine
+    else {
       outputs.appliedVolts = Constants.Turret.HOOD_HOMING_VOLTS;
       outputs.mode = HoodIOOutputMode.OPEN_LOOP;
-      if(inputs.supplyCurrentAmps >= Constants.Turret.HOOD_HOMING_STALL_CURRENT_AMPS){
+
+      if(inputs.currentAmps >= Constants.Turret.HOOD_HOMING_STALL_CURRENT_AMPS){
         stallCount++;
       } else {
         stallCount = 0;
       }
+
+      //if stalled or hit limit switch set new offset (effectively zeroes encoder)
       if(inputs.limitSwitch || stallCount >= Constants.Turret.HOOD_HOMING_STALL_LOOP_THRESHOLD){
         homing = false;
         offset = -inputs.positionRots;
+        outputs.mode = HoodIOOutputMode.BRAKE;
       }
     }
 

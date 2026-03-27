@@ -26,7 +26,7 @@ import static edu.wpi.first.units.Units.Volts;
 
 public class TurretSubsystem extends SubsystemBase {
   private final RobotState robotState;
-  private final TurretIO io;
+  private final TurretIO io;  
   private final TurretIOInputs inputs = new TurretIOInputs();
   private final TurretSetpoints setpoints = new TurretSetpoints();
   private final TurretAimGoal aimGoal = new TurretAimGoal();

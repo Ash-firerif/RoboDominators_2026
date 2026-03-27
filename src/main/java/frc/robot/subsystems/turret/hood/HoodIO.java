@@ -10,14 +10,12 @@ public interface HoodIO {
     boolean limitSwitch = false;
     double positionRots = 0.0;
     double appliedVolts = 0.0;
-    double supplyCurrentAmps = 0.0;
-    double torqueCurrentAmps = 0.0;
+    double currentAmps = 0.0;
     double tempCelsius = 0.0;
   }
 
   public static enum HoodIOOutputMode {
     BRAKE,
-    COAST,
     CLOSED_LOOP,
     OPEN_LOOP
   }
@@ -27,8 +25,8 @@ public interface HoodIO {
     public HoodIOOutputMode mode = HoodIOOutputMode.BRAKE;
     // Closed loop control
     public double positionRots = 0.0;
-    public double kP = 0.0;
-    public double kD = 0.0;
+    //public double kP = 0.0;
+    //public double kD = 0.0;
 
     // Open loop control for homing
     public double appliedVolts = 0.0;
