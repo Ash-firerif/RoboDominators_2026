@@ -5,7 +5,6 @@ import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.DriverStation;
 import frc.robot.Constants;
 import frc.robot.RobotState;
-import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.util.SmartLogger;
 import java.util.function.Supplier;
 
@@ -16,7 +15,6 @@ import java.util.function.Supplier;
 //   - Tower shadow zone: 44in x 47in against each driver wall (behind the alliance tower)
 // AutoShootCommand reads shotSuppressed to block firing; turret keeps tracking.
 public class TurretTargetSelector implements Supplier<Pose2d> {
-  private final PoseEstimatorSubsystem poseEstimator;
   private final RobotState robotState;
 
   private static final double ZONE_HYSTERESIS_METERS = 0.3;
@@ -37,14 +35,13 @@ public class TurretTargetSelector implements Supplier<Pose2d> {
   private boolean lastInOpponentZone   = false;
   private boolean lastOnLeftSide       = false;
 
-  public TurretTargetSelector(PoseEstimatorSubsystem poseEstimator, RobotState robotState) {
-    this.poseEstimator = poseEstimator;
+  public TurretTargetSelector(RobotState robotState) {
     this.robotState = robotState;
   }
 
   @Override
   public Pose2d get() {
-    Pose2d robotPose = poseEstimator.getEstimatedPose();
+    Pose2d robotPose = robotState.getRobotPose();
     // Use the cached alliance from RobotState — never call DriverStation.getAlliance() directly
     // in a periodic loop, as it can return empty on a DS blip and silently default to Blue,
     // corrupting the hysteresis state for the rest of the match.

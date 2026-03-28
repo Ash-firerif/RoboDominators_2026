@@ -1,12 +1,16 @@
 package frc.robot.subsystems.turret.turret;
 
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
 import frc.robot.Constants;
+import frc.robot.subsystems.turret.LaunchCalculator;
 import frc.robot.subsystems.turret.turret.TurretIO.TurretIOOutputMode;
 import frc.robot.subsystems.turret.turret.TurretIO.TurretIOOutputs;
 import frc.robot.util.SmartLogger;
+
+import java.util.function.DoubleSupplier;
 
 import org.littletonrobotics.junction.AutoLogOutput;
 import org.littletonrobotics.junction.Logger;
@@ -25,7 +29,7 @@ public class Turret extends SubsystemBase {
   }
 
   @AutoLogOutput
-  private boolean isTurretOnTarget() {
+  public boolean isTurretOnTarget() {
     double error = Math.abs(outputs.positionRots - inputs.positionRots);
     if (error < Constants.Turret.TURRET_ON_TARGET_TOLERANCE_ROT) {
       turretOnTargetLoops++;
@@ -73,5 +77,13 @@ public class Turret extends SubsystemBase {
     
     Logger.recordOutput("Turret/GoalAngleRots", goalAngle);
     io.applyOutputs(outputs);
+  }
+
+  public Command runTrackTargetCommand() {
+    return run(() -> setTarget(LaunchCalculator.getInstance().getParameters().turretRots()));
+  }
+
+  public Command runFixedCommand(DoubleSupplier rots) {
+    return run(() -> setTarget(rots.getAsDouble()));
   }
 }

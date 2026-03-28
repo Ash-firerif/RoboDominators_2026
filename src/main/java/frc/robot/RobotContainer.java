@@ -44,12 +44,14 @@ import frc.robot.commands.drive.SnapToHeadingDynamic;
 import frc.robot.commands.drive.SmartDriveToPosition;
 import frc.robot.commands.util.SetStartingPoseCommand;
 import frc.robot.subsystems.*;
-import frc.robot.subsystems.turret.TurretIOCTRE;
-import frc.robot.subsystems.turret.TurretSubsystem;
-import frc.robot.subsystems.turret.TurretSubsystem;
-import frc.robot.subsystems.turret.TurretAimPipeline;
-import frc.robot.subsystems.turret.TurretAimSolver;
 import frc.robot.subsystems.turret.TurretTargetSelector;
+import frc.robot.subsystems.turret.flywheel.Flywheel;
+import frc.robot.subsystems.turret.flywheel.FlywheelIOTalonFX;
+import frc.robot.subsystems.turret.hood.Hood;
+import frc.robot.subsystems.turret.hood.HoodIO;
+import frc.robot.subsystems.turret.hood.HoodIOTalonFX;
+import frc.robot.subsystems.turret.turret.Turret;
+import frc.robot.subsystems.turret.turret.TurretIOTalonFX;
 import frc.robot.util.SmartLogger;
 import frc.robot.util.TouchscreenInterface;
 
@@ -90,8 +92,9 @@ public class RobotContainer {
   final PoseEstimatorSubsystem poseEstimator;
   final TagVisionSubsystem tagVisionSubsystem;
   public final LEDSubsystem ledSubsystem;
-  TurretSubsystem turretSubsystem;
-  TurretSubsystem turretSubsystem2;
+  private Hood hood;
+  private Flywheel flywheel;
+  private Turret turret;
   IntakeSubsystem intakeSubsystem;
   ClimberSubsystem climberSubsystem;
   SpindexerSubsystem spindexerSubsystem;
@@ -133,57 +136,18 @@ public class RobotContainer {
     poseEstimator = new PoseEstimatorSubsystem(driveSubsystem, this.robotState, questNav);
     tagVisionSubsystem = new TagVisionSubsystem(poseEstimator);
     ledSubsystem = new LEDSubsystem(this.robotState);
-    turretSubsystem = ENABLE_TURRET ? new TurretSubsystem(this.robotState, new TurretIOCTRE()) : null;
-    turretSubsystem2 = ENABLE_TURRET ? new TurretSubsystem(this.robotState, new TurretIOCTRE()) : null;
+    hood = new Hood(new HoodIOTalonFX());
+    flywheel = new Flywheel(new FlywheelIOTalonFX());
+    turret = new Turret(new TurretIOTalonFX());
     intakeSubsystem = ENABLE_INTAKE ? new IntakeSubsystem(this.robotState) : null;
     if (intakeSubsystem != null) {
       // No auto-start on extend — rollers only run while B is held.
       intakeSubsystem.setOnExtendComplete(null);
     }
 
-    // Wire pose-based tracking as the turret's default command (active in PHASE_2+).
-    // While no higher-priority command holds the turret, it continuously solves bearing to target.
-    // The aim goal only enables when phase >= PHASE_2 and pose is initialized.
-    if (turretSubsystem != null) {
-      TurretAimSolver aimSolver = new TurretAimSolver();
-      TurretTargetSelector targetSelector = new TurretTargetSelector(poseEstimator, robotState);
-      TurretAimPipeline aimPipeline = new TurretAimPipeline(
-          poseEstimator,
-          driveSubsystem,
-          targetSelector,
-          aimSolver);
-      turretSubsystem.setDefaultCommand(
-          Commands.run(() -> {
-            // Phase1Fallback or QuestNav emergency: hold turret forward under PID,
-            // hood+flywheel still track distance. Bypasses trackingEnabled.
-            if (robotState.isTurretPhase1Fallback() || robotState.isQuestNavEmergencyMode()) {
-              edu.wpi.first.math.geometry.Pose2d robotPose = poseEstimator.getEstimatedPose();
-              edu.wpi.first.math.geometry.Pose2d targetPose = targetSelector.get();
-              double distanceM = (robotPose != null && targetPose != null)
-                  ? robotPose.getTranslation().getDistance(targetPose.getTranslation())
-                  : frc.robot.Constants.Turret.FALLBACK_DISTANCE_METERS;
-              turretSubsystem.holdForwardUnderPID(distanceM);
-            } else {
-              turretSubsystem.updateAimFromProvider(aimPipeline);
-            }
-            if (robotState.isFlywheelOn()) {
-              double frontRps, backRps;
-              frontRps = turretSubsystem.getAimGoalFrontRps();
-              backRps  = turretSubsystem.getAimGoalBackRps();
-              if (frontRps <= 0.0) frontRps = Constants.Turret.FLYWHEEL_WARMUP_FRONT_RPS;
-              if (backRps  <= 0.0) backRps  = Constants.Turret.FLYWHEEL_WARMUP_BACK_RPS;
-              frontRps *= Constants.Turret.FLYWHEEL_RPS_SCALE;
-              backRps  *= Constants.Turret.FLYWHEEL_RPS_SCALE;
-              
-              turretSubsystem.setFlywheelFrontRps(frontRps);
-              turretSubsystem.setFlywheelBackRps(backRps);
-            } else {
-              turretSubsystem.stopFlywheel();
-            }
-          }, turretSubsystem)
-              .beforeStarting(() -> aimSolver.resetLatch())
-              .withName("TurretTrackingDefault"));
-    }
+    hood.setDefaultCommand(hood.runTrackTargetCommand());
+    turret.setDefaultCommand(turret.runTrackTargetCommand());
+
     //climberSubsystem = ENABLE_CLIMBER ? new ClimberSubsystem(this.robotState) : null;
     spindexerSubsystem = ENABLE_SPINDEXER ? new SpindexerSubsystem(this.robotState) : null;
     singulatorSubsystem = ENABLE_SINGULATOR ? new SingulatorSubsystem(this.robotState) : null;
@@ -215,7 +179,7 @@ public class RobotContainer {
     SmartDriveToPosition.configure(poseEstimator, robotState, driveSubsystem, questNav); // Static config for SmartDrive commands
 
     configurePathPlanner();
-    AutoCommands.register(intakeSubsystem, turretSubsystem, spindexerSubsystem, singulatorSubsystem, climberSubsystem, robotState);
+    AutoCommands.register(hood, flywheel, turret, intakeSubsystem, spindexerSubsystem, singulatorSubsystem, climberSubsystem, robotState);
     configureDefaultCommands();
     if (Constants.Turret.REQUIRE_TURRET_FORWARD_CONFIRM) {
       SmartLogger.logConsole("Waiting for turret forward confirm (LB+RB) before enabling controls", "Homing");
@@ -450,19 +414,17 @@ public class RobotContainer {
     // Flywheels spin up on press, feed starts once up to speed, stops + flywheels off on release.
     new Trigger(() -> operatorController.getRightTriggerAxis() > 0.5)
         .whileTrue(Commands.run(() -> {
-          if (turretSubsystem == null) return;
-          if (!robotState.isFlywheelOn()) robotState.setFlywheelOn(true);
-          if (!turretSubsystem.isReadyToShoot()) return;
+          flywheel.runTrackTargetCommand();
+          if (!(hood.isHoodOnTarget() && flywheel.isFlywheelOnTarget() && turret.isTurretOnTarget())) return;
           boolean spindexerAllowed = intakeSubsystem == null
               || (robotState.getIntakePosition() != RobotState.IntakePosition.EXTENDING
               &&  robotState.getIntakePosition() != RobotState.IntakePosition.RETRACTING);
-          if (spindexerSubsystem  != null && spindexerAllowed) spindexerSubsystem.spinForward();
-          if (singulatorSubsystem != null) singulatorSubsystem.primeAndFeed();
+          if (spindexerAllowed) spindexerSubsystem.spinForward();
+          singulatorSubsystem.primeAndFeed();
         }).finallyDo(() -> {
-          if (spindexerSubsystem  != null) spindexerSubsystem.stop();
-          if (singulatorSubsystem != null) singulatorSubsystem.pause();
-          robotState.setFlywheelOn(false);
-          if (turretSubsystem != null) turretSubsystem.stopAll();
+          spindexerSubsystem.stop();
+          singulatorSubsystem.pause();
+          flywheel.stopCommand();
         }));
     // --- END TURRET FLYWHEELS + SHOOT ---
 

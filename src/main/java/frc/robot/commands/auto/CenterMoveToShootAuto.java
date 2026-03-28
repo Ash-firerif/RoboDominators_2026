@@ -10,7 +10,9 @@ import frc.robot.subsystems.IntakeSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.SingulatorSubsystem;
 import frc.robot.subsystems.SpindexerSubsystem;
-import frc.robot.subsystems.turret.TurretSubsystem;
+import frc.robot.subsystems.turret.flywheel.Flywheel;
+import frc.robot.subsystems.turret.hood.Hood;
+import frc.robot.subsystems.turret.turret.Turret;
 
 // Center start auto — robot begins touching the hub so intake must NOT deploy until after backup.
 // Turret is locked forward under PID (Phase1Fallback). Bot backs up 1 foot robot-relative,
@@ -23,7 +25,9 @@ public class CenterMoveToShootAuto extends SequentialCommandGroup {
   private static final double BACKUP_TIME_SECS  = BACKUP_DISTANCE_M / BACKUP_SPEED_MPS;
 
   public CenterMoveToShootAuto(
-      TurretSubsystem turret,
+      Hood hood,
+      Flywheel flywheel,
+      Turret turret,
       SpindexerSubsystem spindexer,
       SingulatorSubsystem singulator,
       IntakeSubsystem intake,
@@ -59,7 +63,7 @@ public class CenterMoveToShootAuto extends SequentialCommandGroup {
 
         // Wait for flywheels to reach 95% of target speed before feeding.
         // 4s timeout backstop so auto never hangs if flywheel fails to spin up.
-        Commands.waitUntil(() -> turret.isReadyToShoot())
+        Commands.waitUntil(() -> hood.isHoodOnTarget() && flywheel.isFlywheelOnTarget() && turret.isTurretOnTarget())
             .withTimeout(4.0),
 
         // Fire
@@ -72,12 +76,10 @@ public class CenterMoveToShootAuto extends SequentialCommandGroup {
 
         // Stop everything, clear fallback flag, enable tracking so teleop handoff skips lockout
         Commands.runOnce(() -> {
-          turret.stopFlywheel();
           robotState.setFlywheelOn(false);
           spindexer.stop();
           singulator.pause();
           robotState.setTurretPhase1Fallback(false);
-          turret.enableTracking();
         }, spindexer, singulator)
     );
   }

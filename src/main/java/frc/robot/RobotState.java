@@ -3,11 +3,19 @@ package frc.robot;
 import frc.robot.util.MatchPhaseTracker;
 import frc.robot.util.SmartLogger;
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.DriverStation;
 
 // Global robot state tracker - coordinates subsystem states and robot intents
 // Single source of truth for robot mode, navigation phase, and mechanism states (2026+)
 public class RobotState {
+  
+  private static RobotState instance;
+
+  public static RobotState getInstance() {
+    if (instance == null) instance = new RobotState();
+    return instance;
+  }
   
   // Game state (FMS-driven)
   public enum Mode {
@@ -143,6 +151,7 @@ public class RobotState {
   
   // Field position
   private Pose2d robotPose = new Pose2d();
+  private ChassisSpeeds robotVelocity = new ChassisSpeeds();
   
   // PUBLIC API
   public void requestIntent(RobotIntent intent) {
@@ -166,7 +175,9 @@ public class RobotState {
   public NavigationPhase getNavigationPhase() { return navigationPhase; }
   
   public void setRobotPose(Pose2d pose) { this.robotPose = pose; }
+  public void setRobotVelocity(ChassisSpeeds velocity) { this.robotVelocity = velocity; }
   public Pose2d getRobotPose() { return robotPose; }
+  public ChassisSpeeds getRobotVelocity() { return robotVelocity; }
   
   public void setMode(Mode mode) {
     if (this.mode == mode) {

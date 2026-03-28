@@ -1,11 +1,15 @@
 package frc.robot.subsystems.turret.hood;
 
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
 import frc.robot.Constants;
+import frc.robot.subsystems.turret.LaunchCalculator;
 import frc.robot.subsystems.turret.hood.HoodIO.HoodIOOutputMode;
 import frc.robot.subsystems.turret.hood.HoodIO.HoodIOOutputs;
+
+import java.util.function.DoubleSupplier;
 
 import org.littletonrobotics.junction.AutoLogOutput;
 import org.littletonrobotics.junction.Logger;
@@ -74,5 +78,13 @@ public class Hood extends SubsystemBase {
     Logger.recordOutput("Hood/Homing", homing);
     Logger.recordOutput("Hood/GoalAngleRots", goalAngle);
     io.applyOutputs(outputs);
+  }
+
+  public Command runTrackTargetCommand() {
+    return run(() -> setTarget(LaunchCalculator.getInstance().getParameters().hoodRots()));
+  }
+
+  public Command runFixedCommand(DoubleSupplier angle) {
+    return run(() -> setTarget(angle.getAsDouble()));
   }
 }

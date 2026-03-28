@@ -1,5 +1,7 @@
 package frc.robot.commands.auto;
 
+import java.util.function.DoubleSupplier;
+
 import com.pathplanner.lib.auto.NamedCommands;
 import edu.wpi.first.wpilibj2.command.Commands;
 import frc.robot.Constants;
@@ -8,7 +10,9 @@ import frc.robot.subsystems.ClimberSubsystem;
 import frc.robot.subsystems.IntakeSubsystem;
 import frc.robot.subsystems.SingulatorSubsystem;
 import frc.robot.subsystems.SpindexerSubsystem;
-import frc.robot.subsystems.turret.TurretSubsystem;
+import frc.robot.subsystems.turret.flywheel.Flywheel;
+import frc.robot.subsystems.turret.hood.Hood;
+import frc.robot.subsystems.turret.turret.Turret;
 
 // Registers PathPlanner named commands for use in .auto files.
 // Call register() once in RobotContainer before AutoBuilder.buildAutoChooser().
@@ -18,8 +22,10 @@ public final class AutoCommands {
     private AutoCommands() {}
 
     public static void register(
+            Hood hood,
+            Flywheel flywheel,
+            Turret turret,
             IntakeSubsystem intake,
-            TurretSubsystem turret,
             SpindexerSubsystem spindexer,
             SingulatorSubsystem singulator,
             ClimberSubsystem climber,
@@ -63,7 +69,7 @@ public final class AutoCommands {
 
         // ShootStart/ShootStop do not require turret — enableFire/disableFire are state flags only
         // and must not interrupt the tracking default command.
-        if (turret != null && spindexer != null && singulator != null) {
+        if (spindexer != null && singulator != null) {
             NamedCommands.registerCommand("ShootStart", Commands.runOnce(() -> {
                 spindexer.spinForward();
                 singulator.primeAndFeed();
@@ -79,16 +85,9 @@ public final class AutoCommands {
         // Uses HUBCLOSE RPS targets as initial speed; aim pipeline overrides dynamically once tracking enabled.
         // TrackingEnable allows the aim pipeline to run — call once at auto start after turret is homed.
         if (turret != null) {
-            NamedCommands.registerCommand("TrackingEnable", Commands.runOnce(
-                turret::enableTracking, turret));
+            NamedCommands.registerCommand("FlywheelsOn", flywheel.runTrackTargetCommand());
 
-            NamedCommands.registerCommand("FlywheelsOn", Commands.runOnce(() -> {
-                turret.setFlywheelFrontRps(Constants.TurretTargets.HUBCLOSE_FRONT_RPS);
-                turret.setFlywheelBackRps(Constants.TurretTargets.HUBCLOSE_BACK_RPS);
-            }, turret));
-
-            NamedCommands.registerCommand("FlywheelsOff", Commands.runOnce(() ->
-                turret.stopFlywheel(), turret));
+            NamedCommands.registerCommand("FlywheelsOff", flywheel.stopCommand());
         }
 
         // --- Meta commands (combinations for simple autos) ---
