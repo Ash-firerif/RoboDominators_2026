@@ -37,20 +37,20 @@ public class ShootInPlaceLeftAuto extends SequentialCommandGroup {
         // Enable tracking and spin up flywheels. No turret requirement here — default aim
         // pipeline keeps running so the turret actually rotates to the computed bearing.
         Commands.runOnce(() -> {
-          //turret.enableTracking();
           robotState.setFlywheelOn(true);
           if (intake != null) {
-            intake.extend();
-            intake.spinIn();
+            //intake.extendOnly();
+            //intake.spinIn();
           }
         }),
 
-        // Wait for spinup + settle — default pipeline aims turret during this time.
-        Commands.waitSeconds(Constants.Auto.SHOOT_IN_PLACE_SPINUP_SECONDS + 1.0),
+        // Wait for flywheels to reach 95% of target speed before feeding.
+        // 4s timeout backstop so auto never hangs if flywheel fails to spin up.
+        Commands.waitUntil(() -> turret.isReadyToShoot())
+            .withTimeout(4.0),
 
         // Start the feed chain
         Commands.runOnce(() -> {
-          turret.enableFire();
           spindexer.spinForward();
           singulator.primeAndFeed();
         }, spindexer, singulator),
@@ -60,14 +60,11 @@ public class ShootInPlaceLeftAuto extends SequentialCommandGroup {
 
         // Stop everything
         Commands.runOnce(() -> {
-          turret.disableFire();
-          turret.setFlywheelPercent(0.0);
+          turret.stopFlywheel();
           robotState.setFlywheelOn(false);
           spindexer.stop();
           singulator.pause();
         }, spindexer, singulator)
     );
-
-    setName("ShootInPlaceLeft");
   }
 }

@@ -11,12 +11,11 @@ import frc.robot.subsystems.SingulatorSubsystem;
 import frc.robot.subsystems.SpindexerSubsystem;
 import frc.robot.subsystems.turret.TurretSubsystem;
 
-// Stationary shoot auto — no driving. Right side of field (works for both alliances).
-// Pose is seeded from PoseInitializer which flips for Red automatically, same as PP autos.
-// Tune SPINUP_SECONDS and SHOOT_SECONDS in Constants.Auto.
-public class ShootInPlaceRightAuto extends SequentialCommandGroup {
+// Stationary shoot auto — no driving. Robot starts up against the hub facing left (90 deg).
+// Uses BLUE_REBUILT_HUB_RIGHT_ACCURATE pose for more precise QuestNav seeding than ShootInPlaceRight.
+public class ShootInPlaceRightAccurateAuto extends SequentialCommandGroup {
 
-  public ShootInPlaceRightAuto(
+  public ShootInPlaceRightAccurateAuto(
       TurretSubsystem turret,
       SpindexerSubsystem spindexer,
       SingulatorSubsystem singulator,
@@ -25,22 +24,19 @@ public class ShootInPlaceRightAuto extends SequentialCommandGroup {
       DriveSubsystem drive,
       RobotState robotState) {
 
-    setName("ShootInPlaceRight");
+    setName("ShootInPlaceRightAccurate");
 
     addCommands(
         // Seed pose — PoseInitializer applies the Red flip automatically if needed
         Commands.runOnce(() -> {
-          edu.wpi.first.math.geometry.Pose2d startPose = poseEstimator.getStartPoseForAutoName("ShootInPlaceRight");
+          edu.wpi.first.math.geometry.Pose2d startPose = poseEstimator.getStartPoseForAutoName("ShootInPlaceRightAccurate");
           if (startPose != null) poseEstimator.manualCompSeed(startPose, drive.getGyroRotation());
         }),
 
-        // Enable tracking and spin up flywheels. No turret requirement here — default aim
-        // pipeline keeps running so the turret actually rotates to the computed bearing.
         Commands.runOnce(() -> {
           robotState.setFlywheelOn(true);
           if (intake != null) {
-            //intake.extendOnly(); // TODO: test mode - running the auto without the intake for testing
-            //intake.spinIn();
+            intake.extendOnly();
           }
         }),
 
@@ -68,4 +64,3 @@ public class ShootInPlaceRightAuto extends SequentialCommandGroup {
     );
   }
 }
-

@@ -60,7 +60,7 @@ public class ShootInPlaceLeftBotRotateAuto extends SequentialCommandGroup {
         Commands.runOnce(() -> {
           robotState.setTurretPhase1Fallback(true);
           robotState.setFlywheelOn(true);
-          if (intake != null) { intake.extend(); intake.spinIn(); }
+          if (intake != null) { intake.extendOnly(); }
         }),
 
         // Back up 1 foot robot-relative to clear the hub before rotating
@@ -90,7 +90,6 @@ public class ShootInPlaceLeftBotRotateAuto extends SequentialCommandGroup {
 
         // Fire
         Commands.runOnce(() -> {
-          turret.enableFire();
           spindexer.spinForward();
           singulator.primeAndFeed();
         }, spindexer, singulator),
@@ -99,8 +98,7 @@ public class ShootInPlaceLeftBotRotateAuto extends SequentialCommandGroup {
 
         // Stop everything and clear the fallback flag for teleop
         Commands.runOnce(() -> {
-          turret.disableFire();
-          turret.setFlywheelPercent(0.0);
+          turret.stopFlywheel();
           robotState.setFlywheelOn(false);
           spindexer.stop();
           singulator.pause();

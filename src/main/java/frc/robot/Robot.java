@@ -4,12 +4,21 @@ import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.Watchdog;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.IterativeRobotBase;
+import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.Watchdog;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
+
+import java.lang.reflect.Field;
+import java.util.HashMap;
+import java.util.Map;
 import org.littletonrobotics.junction.LoggedRobot;
 import org.littletonrobotics.junction.Logger;
 import org.littletonrobotics.junction.networktables.NT4Publisher;
 import org.littletonrobotics.junction.wpilog.WPILOGWriter;
+
+import com.revrobotics.util.StatusLogger;
+
 import frc.robot.util.SmartLogger;
 import java.lang.reflect.Field;
 import edu.wpi.first.cameraserver.CameraServer;
@@ -24,6 +33,10 @@ public class Robot extends LoggedRobot {
   private Command autonomousCommand;
   private RobotContainer robotContainer;
   private RobotState robotState;
+
+  private double autoStart;
+  private boolean autoMessagePrinted;
+  private final Map<String, Integer> commandCounts = new HashMap<>();
   
   private boolean lowBatteryWarningShown = false;
   private boolean criticalBatteryWarningShown = false;
@@ -39,11 +52,10 @@ public class Robot extends LoggedRobot {
   // Runs ONCE at robot boot - setup logging and create subsystems
   @Override
   public void robotInit() {
-    //test push
-    //test push 2
-    //test push 3
+    Logger.start(); // Start logging! No more data receivers, replay sources, or metadata values may be added.
     CanBridge.runTCP(); // allows GrappleHook to connect for LaserCAN tuning
-    com.ctre.phoenix6.SignalLogger.stop(); // .hoot files not needed — AKit .wpilog is our log format
+    com.ctre.phoenix6.SignalLogger.enableAutoLogging(false); // .hoot files not needed — AKit .wpilog is our log format
+    StatusLogger.disableAutoLogging();
     String projectName = "RoboDominators_2026";
     String teamNumber = "5142";
     String robotName = "Osprey";
@@ -55,20 +67,35 @@ public class Robot extends LoggedRobot {
     Logger.addDataReceiver(new WPILOGWriter("/home/lvuser/logs"));
     Logger.start();
 
-    //Code to disable loop overrun warnings less than 0.02 seconds
+    // Extend watchdog timeout to match our loop period so overrun warnings don't fire on heavy loops
     try {
       Field watchdogField = IterativeRobotBase.class.getDeclaredField("m_watchdog");
       watchdogField.setAccessible(true);
-      Watchdog watchdog = (Watchdog) watchdogField.get(this);
-      watchdog.setTimeout(0.02);
+      ((Watchdog) watchdogField.get(this)).setTimeout(0.04); // 40ms — 2x loop period
     } catch (Exception e) {
-      DriverStation.reportWarning("Failed to disable loop overrun warnings.", false);
+      DriverStation.reportWarning("Could not extend watchdog timeout: " + e.getMessage(), false);
     }
-    CommandScheduler.getInstance().setPeriod(0.02);
 
-    String initMsg = projectName + " " + teamNumber + " - " + robotName + "\n" 
-                    + "AdvantageKit: ACTIVE\n" + 
-                    "Battery: " + RobotController.getBatteryVoltage() + "V";
+    // Log every command start/finish/interrupt so replays show exactly what ran and when
+    CommandScheduler.getInstance().onCommandInitialize(cmd -> {
+      int count = commandCounts.getOrDefault(cmd.getName(), 0) + 1;
+      commandCounts.put(cmd.getName(), count);
+      Logger.recordOutput("Commands/" + cmd.getName(), true);
+    });
+    CommandScheduler.getInstance().onCommandFinish(cmd -> {
+      int count = Math.max(0, commandCounts.getOrDefault(cmd.getName(), 0) - 1);
+      commandCounts.put(cmd.getName(), count);
+      Logger.recordOutput("Commands/" + cmd.getName(), count > 0);
+    });
+    CommandScheduler.getInstance().onCommandInterrupt(cmd -> {
+      int count = Math.max(0, commandCounts.getOrDefault(cmd.getName(), 0) - 1);
+      commandCounts.put(cmd.getName(), count);
+      Logger.recordOutput("Commands/" + cmd.getName(), count > 0);
+    });
+
+    String initMsg = projectName + " " + teamNumber + " - " + robotName + "\n"
+                    + "AdvantageKit: ACTIVE\n"
+                    + "Battery: " + RobotController.getBatteryVoltage() + "V";
     SmartLogger.logConsole(initMsg, "Robot Init", 15);
     
     try {
@@ -135,8 +162,7 @@ public class Robot extends LoggedRobot {
     // Update match phase tracker every loop so tab switching works in all modes
     if (robotState != null) {
       robotState.updateMatchPhase();
-    }
-    
+    }    
     // Read battery once per loop
     cachedBatteryVoltage = RobotController.getBatteryVoltage();
     
@@ -167,6 +193,17 @@ public class Robot extends LoggedRobot {
     }
     
     LogSpaceMonitor.periodic();
+
+    // Print auto duration once when the auto command finishes
+    if (autonomousCommand != null && !autonomousCommand.isScheduled() && !autoMessagePrinted) {
+      autoMessagePrinted = true;
+      double elapsed = Timer.getTimestamp() - autoStart;
+      if (DriverStation.isAutonomousEnabled()) {
+        SmartLogger.logConsole(String.format("*** Auto finished in %.2f secs ***", elapsed), "Auto");
+      } else {
+        SmartLogger.logConsole(String.format("*** Auto cancelled at %.2f secs ***", elapsed), "Auto");
+      }
+    }
   }
 
   // Check battery with proper hysteresis (disabled mode only)
@@ -197,15 +234,17 @@ public class Robot extends LoggedRobot {
   @Override
   public void disabledInit() {
     matchActive = false;
-    robotState.setEnabled(false);
-    robotState.setMode(RobotState.Mode.DISABLED);
+    if (robotState != null) {
+      robotState.setEnabled(false);
+      robotState.setMode(RobotState.Mode.DISABLED);
+    }
 
-    // Explicitly stop all mechanism motors on disable (WPILib stops outputs automatically
-    // but this ensures our state tracking stays consistent with actual motor state).
-    if (robotContainer.intakeSubsystem     != null) robotContainer.intakeSubsystem.stopAll();
-    if (robotContainer.climberSubsystem    != null) robotContainer.climberSubsystem.stopAll();
-    if (robotContainer.spindexerSubsystem  != null) robotContainer.spindexerSubsystem.stopAll();
-    if (robotContainer.singulatorSubsystem != null) robotContainer.singulatorSubsystem.stopAll();
+    if (robotContainer != null) {
+      if (robotContainer.intakeSubsystem     != null) robotContainer.intakeSubsystem.stopAll();
+      if (robotContainer.climberSubsystem    != null) robotContainer.climberSubsystem.stopAll();
+      if (robotContainer.spindexerSubsystem  != null) robotContainer.spindexerSubsystem.stopAll();
+      if (robotContainer.singulatorSubsystem != null) robotContainer.singulatorSubsystem.stopAll();
+    }
 
     Logger.recordOutput("Robot/Mode", "DISABLED");
     SmartLogger.logConsole("Robot DISABLED");
@@ -219,16 +258,33 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void autonomousInit() {
+    if (robotState == null || robotContainer == null) {
+      SmartLogger.logConsoleError("autonomousInit skipped — robot failed to initialize");
+      return;
+    }
+    autoStart = Timer.getTimestamp();
+    autoMessagePrinted = false;
     matchActive = true;
     robotState.setEnabled(true);
     robotState.setMode(RobotState.Mode.ENABLED_AUTO);
+    robotState.resetBallCounters();
     
     Logger.recordOutput("Robot/Mode", "AUTO");
     SmartLogger.logConsole(">>> AUTONOMOUS MODE STARTED <<<", "Auto Start", 15);
-    
-    autonomousCommand = robotContainer.getAutonomousCommand();
 
-    // Homing is triggered manually by the operator Start button — not auto on enable.
+    // Seed the turret encoder and enable tracking for every auto.
+    // Turret must be physically pointing forward before any auto runs.
+    // Also reset fire/flywheel/feed state in case a previous auto was aborted mid-run.
+    if (robotContainer.turretSubsystem != null) {
+      robotContainer.turretSubsystem.homeForward();
+      robotContainer.turretSubsystem.enableTracking();
+      robotContainer.turretSubsystem.stopFlywheel();
+    }
+    if (robotContainer.spindexerSubsystem  != null) robotContainer.spindexerSubsystem.stop();
+    if (robotContainer.singulatorSubsystem != null) robotContainer.singulatorSubsystem.pause();
+    robotState.setFlywheelOn(false);
+
+    autonomousCommand = robotContainer.getAutonomousCommand();
 
     if (autonomousCommand != null) {
       String autoName = autonomousCommand.getName();
@@ -256,6 +312,10 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void teleopInit() {
+    if (robotState == null || robotContainer == null) {
+      SmartLogger.logConsoleError("teleopInit skipped — robot failed to initialize");
+      return;
+    }
     matchActive = true;
     
     if (autonomousCommand != null) {
@@ -303,4 +363,10 @@ public class Robot extends LoggedRobot {
 
   @Override
   public void simulationPeriodic() {}
+
+  // Returns false during the first 30 seconds of real-robot operation to suppress
+  // hardware fault alerts that fire spuriously during boot and brownout recovery.
+  public static boolean showHardwareAlerts() {
+    return !RobotController.isBrownedOut() && Timer.getTimestamp() > 30.0;
+  }
 }

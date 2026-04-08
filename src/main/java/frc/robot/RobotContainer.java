@@ -9,6 +9,8 @@ import com.pathplanner.lib.config.PIDConstants;
 import com.pathplanner.lib.config.RobotConfig;
 import com.pathplanner.lib.controllers.PPHolonomicDriveController;
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.wpilibj.Alert;
+import edu.wpi.first.wpilibj.Alert.AlertType;
 import edu.wpi.first.wpilibj.DriverStation;
 import java.util.Optional;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
@@ -18,7 +20,9 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.JoystickButton;
+import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
+import edu.wpi.first.math.filter.Debouncer.DebounceType;
 import edu.wpi.first.math.geometry.Rotation2d;
 import frc.robot.commands.auto.AutoCommands;
 import frc.robot.commands.auto.CenterMoveToShootAuto;
@@ -28,6 +32,7 @@ import frc.robot.commands.auto.DoNothingRightAuto;
 import frc.robot.commands.auto.ShootInPlaceLeftAuto;
 import frc.robot.commands.auto.ShootInPlaceLeftBotRotateAuto;
 import frc.robot.commands.auto.ShootInPlaceRightAuto;
+import frc.robot.commands.auto.ShootInPlaceRightAccurateAuto;
 import frc.robot.commands.auto.ShootInPlaceRightBotRotateAuto;
 import frc.robot.commands.drive.DriveWithJoysticks;
 import frc.robot.commands.drive.DynamicBumpTraversalCommand;
@@ -39,11 +44,14 @@ import frc.robot.commands.drive.SnapToHeadingDynamic;
 import frc.robot.commands.drive.SmartDriveToPosition;
 import frc.robot.commands.util.SetStartingPoseCommand;
 import frc.robot.subsystems.*;
-import frc.robot.subsystems.turret.TurretIOCTRE;
-import frc.robot.subsystems.turret.TurretSubsystem;
-import frc.robot.subsystems.turret.TurretAimPipeline;
-import frc.robot.subsystems.turret.TurretAimSolver;
 import frc.robot.subsystems.turret.TurretTargetSelector;
+import frc.robot.subsystems.turret.flywheel.Flywheel;
+import frc.robot.subsystems.turret.flywheel.FlywheelIOTalonFX;
+import frc.robot.subsystems.turret.hood.Hood;
+import frc.robot.subsystems.turret.hood.HoodIO;
+import frc.robot.subsystems.turret.hood.HoodIOTalonFX;
+import frc.robot.subsystems.turret.turret.Turret;
+import frc.robot.subsystems.turret.turret.TurretIOTalonFX;
 import frc.robot.util.SmartLogger;
 import frc.robot.util.TouchscreenInterface;
 
@@ -51,7 +59,7 @@ import frc.robot.util.TouchscreenInterface;
 // To grab latest 10 logs and delete them: run .\scripts\storelogs.bat
 public class RobotContainer {
   // === CONFIGURATION ===
-  public static final boolean COMPETITION_MODE = true; // Disable logs/streams for matches
+  public static final boolean COMPETITION_MODE = false; // Disable logs/streams for matches
   private static final boolean ENABLE_CONSOLE_LOGGING = !COMPETITION_MODE;
   private static final boolean USE_TOUCHSCREEN_OPERATOR = false;
   private static final boolean SYSID_MODE = false; // Phoenix Tuner X characterization mode
@@ -70,6 +78,9 @@ public class RobotContainer {
   // Operator Xbox controller on the next USB slot (port 1)
   private final XboxController operatorController = new XboxController(Constants.OPERATOR_CONTROLLER_PORT);
 
+  private final Alert driverDisconnected   = new Alert("Driver controller disconnected (port " + DRIVER_CONTROLLER_PORT + ").", AlertType.kWarning);
+  private final Alert operatorDisconnected = new Alert("Operator controller disconnected (port " + Constants.OPERATOR_CONTROLLER_PORT + ").", AlertType.kWarning);
+
   // When REQUIRE_TURRET_FORWARD_CONFIRM=true, bindings are deferred until Back+A confirm.
   private boolean bindingsConfigured = false;
 
@@ -81,7 +92,9 @@ public class RobotContainer {
   final PoseEstimatorSubsystem poseEstimator;
   final TagVisionSubsystem tagVisionSubsystem;
   public final LEDSubsystem ledSubsystem;
-  TurretSubsystem turretSubsystem;
+  private Hood hood;
+  private Flywheel flywheel;
+  private Turret turret;
   IntakeSubsystem intakeSubsystem;
   ClimberSubsystem climberSubsystem;
   SpindexerSubsystem spindexerSubsystem;
@@ -123,52 +136,18 @@ public class RobotContainer {
     poseEstimator = new PoseEstimatorSubsystem(driveSubsystem, this.robotState, questNav);
     tagVisionSubsystem = new TagVisionSubsystem(poseEstimator);
     ledSubsystem = new LEDSubsystem(this.robotState);
-    turretSubsystem = ENABLE_TURRET ? new TurretSubsystem(this.robotState, new TurretIOCTRE()) : null;
+    hood = new Hood(new HoodIOTalonFX());
+    flywheel = new Flywheel(new FlywheelIOTalonFX());
+    turret = new Turret(new TurretIOTalonFX());
     intakeSubsystem = ENABLE_INTAKE ? new IntakeSubsystem(this.robotState) : null;
     if (intakeSubsystem != null) {
       // No auto-start on extend — rollers only run while B is held.
       intakeSubsystem.setOnExtendComplete(null);
     }
 
-    // Wire pose-based tracking as the turret's default command (active in PHASE_2+).
-    // While no higher-priority command holds the turret, it continuously solves bearing to target.
-    // The aim goal only enables when phase >= PHASE_2 and pose is initialized.
-    if (turretSubsystem != null) {
-      TurretAimSolver aimSolver = new TurretAimSolver();
-      TurretTargetSelector targetSelector = new TurretTargetSelector(poseEstimator, robotState);
-      TurretAimPipeline aimPipeline = new TurretAimPipeline(
-          poseEstimator,
-          driveSubsystem,
-          targetSelector,
-          aimSolver);
-      turretSubsystem.setDefaultCommand(
-          Commands.run(() -> {
-            // Phase1Fallback or QuestNav emergency: hold turret forward under PID,
-            // hood+flywheel still track distance. Bypasses trackingEnabled.
-            if (robotState.isTurretPhase1Fallback() || robotState.isQuestNavEmergencyMode()) {
-              edu.wpi.first.math.geometry.Pose2d robotPose = poseEstimator.getEstimatedPose();
-              edu.wpi.first.math.geometry.Pose2d targetPose = targetSelector.get();
-              double distanceM = (robotPose != null && targetPose != null)
-                  ? robotPose.getTranslation().getDistance(targetPose.getTranslation())
-                  : frc.robot.Constants.Turret.FALLBACK_DISTANCE_METERS;
-              turretSubsystem.holdForwardUnderPID(distanceM);
-            } else {
-              turretSubsystem.updateAimFromProvider(aimPipeline);
-            }
-            if (robotState.isFlywheelOn()) {
-              double frontRps = turretSubsystem.getAimGoalFrontRps();
-              double backRps  = turretSubsystem.getAimGoalBackRps();
-              if (frontRps <= 0.0) frontRps = Constants.Turret.FLYWHEEL_WARMUP_FRONT_RPS;
-              if (backRps  <= 0.0) backRps  = Constants.Turret.FLYWHEEL_WARMUP_BACK_RPS;
-              turretSubsystem.setFlywheelFrontRps(frontRps);
-              turretSubsystem.setFlywheelBackRps(backRps);
-            } else {
-              turretSubsystem.setFlywheelPercent(0.0);
-            }
-          }, turretSubsystem)
-              .beforeStarting(() -> aimSolver.resetLatch())
-              .withName("TurretTrackingDefault"));
-    }
+    hood.setDefaultCommand(hood.runTrackTargetCommand());
+    turret.setDefaultCommand(turret.runTrackTargetCommand());
+
     //climberSubsystem = ENABLE_CLIMBER ? new ClimberSubsystem(this.robotState) : null;
     spindexerSubsystem = ENABLE_SPINDEXER ? new SpindexerSubsystem(this.robotState) : null;
     singulatorSubsystem = ENABLE_SINGULATOR ? new SingulatorSubsystem(this.robotState) : null;
@@ -200,7 +179,7 @@ public class RobotContainer {
     SmartDriveToPosition.configure(poseEstimator, robotState, driveSubsystem, questNav); // Static config for SmartDrive commands
 
     configurePathPlanner();
-    AutoCommands.register(intakeSubsystem, turretSubsystem, spindexerSubsystem, singulatorSubsystem, climberSubsystem);
+    AutoCommands.register(hood, flywheel, turret, intakeSubsystem, spindexerSubsystem, singulatorSubsystem, climberSubsystem, robotState);
     configureDefaultCommands();
     if (Constants.Turret.REQUIRE_TURRET_FORWARD_CONFIRM) {
       SmartLogger.logConsole("Waiting for turret forward confirm (LB+RB) before enabling controls", "Homing");
@@ -210,8 +189,11 @@ public class RobotContainer {
             Commands.waitSeconds(0.1),
             Commands.runOnce(() -> {
               if (bindingsConfigured) return;
-              if (turretSubsystem != null) turretSubsystem.homeForward();
-              if (turretSubsystem != null) turretSubsystem.enableTracking();
+              if (turretSubsystem != null) {
+                turretSubsystem.homeForward();
+                turretSubsystem.enableTracking();
+                //turretSubsystem.enableFire();
+              }
               configureButtonBindings();
               SmartLogger.logConsole("Turret confirmed forward — all controls now active", "Homing");
             })));
@@ -226,10 +208,11 @@ public class RobotContainer {
     
     autoChooser = AutoBuilder.buildAutoChooser(""); // Scans deploy/pathplanner/autos/ for named autos
     autoChooser.setDefaultOption("ShootInPlaceRight", new ShootInPlaceRightAuto(turretSubsystem, spindexerSubsystem, singulatorSubsystem, intakeSubsystem, poseEstimator, driveSubsystem, robotState));
+    autoChooser.addOption("ShootInPlaceRightAccurate", new ShootInPlaceRightAccurateAuto(turretSubsystem, spindexerSubsystem, singulatorSubsystem, intakeSubsystem, poseEstimator, driveSubsystem, robotState));
     autoChooser.addOption("ShootInPlaceLeft",  new ShootInPlaceLeftAuto(turretSubsystem, spindexerSubsystem, singulatorSubsystem, intakeSubsystem, poseEstimator, driveSubsystem, robotState));
-    autoChooser.addOption("DoNothingCenter",   new DoNothingCenterAuto(turretSubsystem, poseEstimator, driveSubsystem));
-    autoChooser.addOption("DoNothingLeft",     new DoNothingLeftAuto(turretSubsystem, poseEstimator, driveSubsystem));
-    autoChooser.addOption("DoNothingRight",    new DoNothingRightAuto(turretSubsystem, poseEstimator, driveSubsystem));
+    autoChooser.addOption("DoNothingCenter",   new DoNothingCenterAuto(poseEstimator, driveSubsystem));
+    autoChooser.addOption("DoNothingLeft",     new DoNothingLeftAuto(poseEstimator, driveSubsystem));
+    autoChooser.addOption("DoNothingRight",    new DoNothingRightAuto(poseEstimator, driveSubsystem));
     autoChooser.addOption("ShootInPlaceRightBotRotate", new ShootInPlaceRightBotRotateAuto(turretSubsystem, spindexerSubsystem, singulatorSubsystem, intakeSubsystem, poseEstimator, driveSubsystem, robotState));
     autoChooser.addOption("ShootInPlaceLeftBotRotate",  new ShootInPlaceLeftBotRotateAuto(turretSubsystem, spindexerSubsystem, singulatorSubsystem, intakeSubsystem, poseEstimator, driveSubsystem, robotState));
     autoChooser.addOption("CenterMoveToShoot",          new CenterMoveToShootAuto(turretSubsystem, spindexerSubsystem, singulatorSubsystem, intakeSubsystem, poseEstimator, driveSubsystem, robotState));
@@ -239,11 +222,18 @@ public class RobotContainer {
     startAutoPreviewMonitor(); // Background thread: watches chooser and queues pose previews
 
     shotSeedChooser.setDefaultOption("HUBCLOSE (1.28m)", Constants.StartingPositions.SHOT_SEED_HUBCLOSE);
+    shotSeedChooser.addOption("HUB 1.7M (1.67m)", Constants.StartingPositions.SHOT_SEED_HUB1_7M);
+    shotSeedChooser.addOption("HUB RIGHT ACCURATE (1.07m)", Constants.StartingPositions.SHOT_SEED_HUB_RIGHT_ACCURATE);
+    shotSeedChooser.addOption("RIGHT BUMP (2.03m)", Constants.StartingPositions.SHOT_SEED_RIGHT_BUMP);
+    shotSeedChooser.addOption("LEFT BUMP (2.03m)",  Constants.StartingPositions.SHOT_SEED_LEFT_BUMP);
     shotSeedChooser.addOption("2M",   Constants.StartingPositions.SHOT_SEED_2M);
     shotSeedChooser.addOption("2.5M", Constants.StartingPositions.SHOT_SEED_2_5M);
     shotSeedChooser.addOption("3M",   Constants.StartingPositions.SHOT_SEED_3M);
     shotSeedChooser.addOption("4M",   Constants.StartingPositions.SHOT_SEED_4M);
     shotSeedChooser.addOption("4.5M", Constants.StartingPositions.SHOT_SEED_4_5M);
+    shotSeedChooser.addOption("OUTPOST (5.48m)", Constants.StartingPositions.SHOT_SEED_OUTPOST);
+    shotSeedChooser.addOption("BACK WALL RIGHT (4.59m)", Constants.StartingPositions.SHOT_SEED_BACK_WALL_RIGHT);
+    shotSeedChooser.addOption("RIGHT CORNER (4.59m)", Constants.StartingPositions.SHOT_SEED_RIGHT_CORNER);
     SmartDashboard.putData("Shot Seed Pose", shotSeedChooser);
     
     SmartLogger.logConsole("RobotContainer initialized - all subsystems ready", "Init Complete", 5);
@@ -305,12 +295,24 @@ public class RobotContainer {
         .onTrue(driveSubsystem.createOrientToFieldCommand(robotState));
 
     // START: Seed pose selected from "Shot Seed Pose" dropdown in Elastic.
-    // Restore to getRebuiltRightCornerPose() for competition.
+    // Poses are defined in blue coordinates — flipped automatically when on red alliance.
+    // isRed is derived from the final seeded pose X (> field midpoint = red) rather than
+    // cachedAlliance, because the cache may not have updated yet when the button is pressed.
     new JoystickButton(driverController, XboxController.Button.kStart.value)
         .onTrue(Commands.runOnce(() -> {
           Pose2d seed = shotSeedChooser.getSelected();
           if (seed == null) seed = Constants.StartingPositions.SHOT_SEED_2M;
-          new SetStartingPoseCommand(seed, "SHOT SEED", gyro, questNav, driveSubsystem, poseEstimator)
+          boolean seedIsRed = isRedAlliance();
+          if (seedIsRed) {
+            seed = new Pose2d(
+                Constants.Field.FIELD_LENGTH_METERS - seed.getX(),
+                Constants.Field.FIELD_WIDTH_METERS  - seed.getY(),
+                seed.getRotation().plus(edu.wpi.first.math.geometry.Rotation2d.fromDegrees(180.0)));
+          }
+          // Determine perspective from the final pose X so it's correct even if cachedAlliance
+          // hasn't updated yet. X > midpoint means the robot is on the red side of the field.
+          boolean poseIsRed = seed.getX() > Constants.Field.FIELD_LENGTH_METERS / 2.0;
+          new SetStartingPoseCommand(seed, "SHOT SEED", gyro, questNav, driveSubsystem, poseEstimator, poseIsRed)
               .schedule();
         }));
 
@@ -318,12 +320,14 @@ public class RobotContainer {
     new Trigger(() -> driverController.getPOV() == 180)
         .onTrue(Commands.runOnce(this::toggleQuestNavEmergencyMode));
 
-    // D-PAD UP: Disabled for competition — turret phase locked in Constants.
-    // new Trigger(() -> driverController.getPOV() == 0)
-    //     .onTrue(Commands.runOnce(() -> {
-    //       boolean nowActive = !robotState.isTurretPhase1Fallback();
-    //       robotState.setTurretPhase1Fallback(nowActive);
-    //     }));
+    // D-PAD UP: Toggle Phase1Fallback — turret holds forward under PID, drive commands still active.
+    // Use when turret tracking is broken but QuestNav/drive are fine.
+    new Trigger(() -> driverController.getPOV() == 0)
+        .onTrue(Commands.runOnce(() -> {
+          boolean nowActive = !robotState.isTurretPhase1Fallback();
+          robotState.setTurretPhase1Fallback(nowActive);
+          SmartLogger.logConsole("Phase1Fallback: " + (nowActive ? "ON" : "OFF"), "Turret");
+        }));
 
     // ========== NORMAL OPERATION BUTTONS (COMMENT OUT FOR SYSID) ==========
 
@@ -405,75 +409,44 @@ public class RobotContainer {
     // --- END INTAKE ---
 
     // --- TURRET FLYWHEELS + SHOOT ---
-    // LT (press): toggle flywheels on/off.
-    new Trigger(() -> operatorController.getLeftTriggerAxis() > 0.5)
-        .onTrue(Commands.runOnce(() -> {
-          if (turretSubsystem == null) return;
-          robotState.setFlywheelOn(!robotState.isFlywheelOn());
-          if (!robotState.isFlywheelOn()) turretSubsystem.setFlywheelPercent(0.0);
-        }));
 
-    // new Trigger(() -> (operatorController.getLeftTriggerAxis() > 0.1 && operatorController.getLeftTriggerAxis() < 0.5)) // Allow LT to toggle flywheels even when both triggers are pressed (for dynamic snap+shoot)
-    //     .onTrue(Commands.runOnce(() -> {
-    //       turretSubsystem.setFlywheelPercent(30);
-    //     })); //remove soon
-
-    // RT (hold): shoot.
-    // If flywheels are already on, feed immediately.
-    // If flywheels are off, spin them up first and wait for them to reach speed before feeding.
-    // Releases spindexer and singulator when trigger is released.
+    // RT (hold): shoot continuously.
+    // Flywheels spin up on press, feed starts once up to speed, stops + flywheels off on release.
     new Trigger(() -> operatorController.getRightTriggerAxis() > 0.5)
         .whileTrue(Commands.run(() -> {
-          if (turretSubsystem == null) return;
-
-          // If flywheel was off, turn it on now — it will spin up this loop and be checked below
-          if (!robotState.isFlywheelOn()) {
-            robotState.setFlywheelOn(true);
-          }
-
-          // Only start feeding once flywheels are up to speed
-          if (!turretSubsystem.isFlywheelSpinningFast()) return;
-
+          flywheel.runTrackTargetCommand();
+          if (!(hood.isHoodOnTarget() && flywheel.isFlywheelOnTarget() && turret.isTurretOnTarget())) return;
           boolean spindexerAllowed = intakeSubsystem == null
               || (robotState.getIntakePosition() != RobotState.IntakePosition.EXTENDING
               &&  robotState.getIntakePosition() != RobotState.IntakePosition.RETRACTING);
-          if (spindexerSubsystem  != null && spindexerAllowed) spindexerSubsystem.spinForward();
-          if (singulatorSubsystem != null) singulatorSubsystem.primeAndFeed();
+          if (spindexerAllowed) spindexerSubsystem.spinForward();
+          singulatorSubsystem.primeAndFeed();
         }).finallyDo(() -> {
-          if (spindexerSubsystem  != null) spindexerSubsystem.stop();
-          if (singulatorSubsystem != null) singulatorSubsystem.pause();
+          spindexerSubsystem.stop();
+          singulatorSubsystem.pause();
+          flywheel.stopCommand();
         }));
     // --- END TURRET FLYWHEELS + SHOOT ---
 
-    // --- TURRET ROTATION ---
-    // D-pad left/right (hold): rotate turret CCW/CW — open-loop, no soft limits.
-    new Trigger(() -> operatorController.getPOV() == 270)
-        .whileTrue(Commands.startEnd(
-          () -> { if (turretSubsystem != null) turretSubsystem.setTurretPercent(-0.09); },
-          () -> { if (turretSubsystem != null) turretSubsystem.setTurretPercent(0.0); }));
-    new Trigger(() -> operatorController.getPOV() == 90)
-        .whileTrue(Commands.startEnd(
-          () -> { if (turretSubsystem != null) turretSubsystem.setTurretPercent(0.09); },
-          () -> { if (turretSubsystem != null) turretSubsystem.setTurretPercent(0.0); }));
-    // --- END TURRET ROTATION ---
-
-    // --- TURRET HOOD ---
-    // D-pad up: step hood up. D-pad down: step hood down.
-    new Trigger(() -> operatorController.getPOV() == 0)
-        .onTrue(Commands.runOnce(() -> { if (turretSubsystem != null) turretSubsystem.hoodStepUp(); }));
-    new Trigger(() -> operatorController.getPOV() == 180)
-        .onTrue(Commands.runOnce(() -> { if (turretSubsystem != null) turretSubsystem.hoodStepDown(); }));
-    // --- END TURRET HOOD ---
-
     // ========== END OPERATOR CONTROLLER BINDINGS ==========
 
-    // Back+Start: emergency re-home — use when turret homing is bad from startup.
-    // Manually rotate turret to forward with D-pad L/R first, then press both together.
-    new Trigger(() -> operatorController.getBackButton() && operatorController.getStartButton())
-        .onTrue(Commands.runOnce(() -> {
-          if (turretSubsystem != null) turretSubsystem.home();
-          SmartLogger.logConsole("Emergency turret re-home triggered (Back+Start) — hall sweep", "Homing");
-        }));
+
+    // ========== MODE TRIGGERS ==========
+
+    // #2: Replace onTeleopInit() logic — auto-enable tracking if turret was already homed in auto
+    RobotModeTriggers.teleop().onTrue(Commands.runOnce(() -> {
+      if (turretSubsystem != null
+          && !turretSubsystem.isTrackingEnabled()) {
+        turretSubsystem.enableTracking();
+        SmartLogger.logConsole("Tracking auto-enabled on teleop init (homed in auto)", "Turret");
+      }
+    }).ignoringDisable(true));
+
+    // #3: Reset flywheel state cleanly when disabled so no stale on/off state carries into next match
+    RobotModeTriggers.disabled().onTrue(Commands.runOnce(() -> {
+      robotState.setFlywheelOn(false);
+      if (turretSubsystem != null) turretSubsystem.stopFlywheel();
+    }).ignoringDisable(true));
   }
 
   // HTML touchscreen interface
@@ -500,9 +473,10 @@ public class RobotContainer {
     if (!Constants.Turret.REQUIRE_TURRET_FORWARD_CONFIRM) return;
     if (bindingsConfigured) return;
     if (turretSubsystem != null && turretSubsystem.isTrackingEnabled()) {
-      turretSubsystem.homeForward();
+      // Auto already ran and called homeForward() — encoder is valid, don't reseed it.
+      // Just unlock the controls.
       configureButtonBindings();
-      SmartLogger.logConsole("Teleop: auto already ran — turret homed forward, controls active", "Homing");
+      SmartLogger.logConsole("Teleop: auto already ran — controls now active", "Homing");
     }
   }
 
@@ -517,7 +491,7 @@ public class RobotContainer {
       // Disable tracking so the default command stops overwriting the emergency setpoints every loop.
       if (turretSubsystem != null) {
         turretSubsystem.disableTracking();
-        turretSubsystem.activateEmergencyHubClose();
+        //turretSubsystem.activateEmergencyHubClose();TODO implement this
       }
     } else {
       // Re-enable tracking when emergency mode is cleared.
@@ -608,6 +582,10 @@ public class RobotContainer {
     if (DriverStation.isDisabled()) {
       applyPendingAutoPreviewPose();
     }
+
+    // #1: Controller disconnect alerts — shown in DS and AdvantageScope
+    driverDisconnected.set(!DriverStation.isJoystickConnected(driverController.getPort()));
+    operatorDisconnected.set(!DriverStation.isJoystickConnected(operatorController.getPort()));
 
     // Publish slow-changing fields at 10Hz - alliance/station/auto don't change every loop
     if (periodicCounter % 5 == 0) {

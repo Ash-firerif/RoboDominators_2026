@@ -10,7 +10,9 @@ import frc.robot.subsystems.IntakeSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.SingulatorSubsystem;
 import frc.robot.subsystems.SpindexerSubsystem;
-import frc.robot.subsystems.turret.TurretSubsystem;
+import frc.robot.subsystems.turret.flywheel.Flywheel;
+import frc.robot.subsystems.turret.hood.Hood;
+import frc.robot.subsystems.turret.turret.Turret;
 
 // Center start auto — robot begins touching the hub so intake must NOT deploy until after backup.
 // Turret is locked forward under PID (Phase1Fallback). Bot backs up 1 foot robot-relative,
@@ -23,7 +25,9 @@ public class CenterMoveToShootAuto extends SequentialCommandGroup {
   private static final double BACKUP_TIME_SECS  = BACKUP_DISTANCE_M / BACKUP_SPEED_MPS;
 
   public CenterMoveToShootAuto(
-      TurretSubsystem turret,
+      Hood hood,
+      Flywheel flywheel,
+      Turret turret,
       SpindexerSubsystem spindexer,
       SingulatorSubsystem singulator,
       IntakeSubsystem intake,
@@ -54,25 +58,24 @@ public class CenterMoveToShootAuto extends SequentialCommandGroup {
 
         // Now safe to deploy intake
         Commands.runOnce(() -> {
-          if (intake != null) { intake.extend(); intake.spinIn(); }
+          if (intake != null) { intake.extendOnly(); }
         }),
 
-        // Settle + finish flywheel spinup
-        Commands.waitSeconds(Constants.Auto.SHOOT_IN_PLACE_SPINUP_SECONDS),
+        // Wait for flywheels to reach 95% of target speed before feeding.
+        // 4s timeout backstop so auto never hangs if flywheel fails to spin up.
+        Commands.waitUntil(() -> hood.isHoodOnTarget() && flywheel.isFlywheelOnTarget() && turret.isTurretOnTarget())
+            .withTimeout(4.0),
 
         // Fire
         Commands.runOnce(() -> {
-          turret.enableFire();
           spindexer.spinForward();
           singulator.primeAndFeed();
         }, spindexer, singulator),
 
         Commands.waitSeconds(Constants.Auto.SHOOT_IN_PLACE_SHOOT_SECONDS),
 
-        // Stop everything and clear the fallback flag for teleop
+        // Stop everything, clear fallback flag, enable tracking so teleop handoff skips lockout
         Commands.runOnce(() -> {
-          turret.disableFire();
-          turret.setFlywheelPercent(0.0);
           robotState.setFlywheelOn(false);
           spindexer.stop();
           singulator.pause();

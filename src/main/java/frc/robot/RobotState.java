@@ -3,11 +3,19 @@ package frc.robot;
 import frc.robot.util.MatchPhaseTracker;
 import frc.robot.util.SmartLogger;
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.DriverStation;
 
 // Global robot state tracker - coordinates subsystem states and robot intents
 // Single source of truth for robot mode, navigation phase, and mechanism states (2026+)
 public class RobotState {
+  
+  private static RobotState instance;
+
+  public static RobotState getInstance() {
+    if (instance == null) instance = new RobotState();
+    return instance;
+  }
   
   // Game state (FMS-driven)
   public enum Mode {
@@ -33,6 +41,8 @@ public class RobotState {
   private boolean deadzoneSuppressed = false;
   // Flywheel warm-up state — readable by auto commands and the default turret command.
   private boolean flywheelOn = false;
+  // Sequenced shooting mode — fires one ball every 4s automatically while flywheels are on.
+  private boolean sequencedShootingMode = false;
   private DriverStation.Alliance alliance = DriverStation.Alliance.Blue;
 
   // Match phase and hub active tracking
@@ -117,6 +127,12 @@ public class RobotState {
   private boolean singulatorBeamBreak = false;
   private boolean deadZoneBeamBreak = false;
   private int ballsFedCount = 0;
+
+  // Segmented ball counters — reset on autonomousInit or via resetBallCounters()
+  private int ballsShotAuto     = 0;
+  private int ballsShotTeleop   = 0;
+  private int ballsShotEndgame  = 0;
+  private int ballsPassed       = 0;
   private boolean intakeLimitSwitch = false;
 
   private boolean turretHoodBeamBreakRaw = false;
@@ -135,6 +151,7 @@ public class RobotState {
   
   // Field position
   private Pose2d robotPose = new Pose2d();
+  private ChassisSpeeds robotVelocity = new ChassisSpeeds();
   
   // PUBLIC API
   public void requestIntent(RobotIntent intent) {
@@ -158,7 +175,9 @@ public class RobotState {
   public NavigationPhase getNavigationPhase() { return navigationPhase; }
   
   public void setRobotPose(Pose2d pose) { this.robotPose = pose; }
+  public void setRobotVelocity(ChassisSpeeds velocity) { this.robotVelocity = velocity; }
   public Pose2d getRobotPose() { return robotPose; }
+  public ChassisSpeeds getRobotVelocity() { return robotVelocity; }
   
   public void setMode(Mode mode) {
     if (this.mode == mode) {
@@ -209,6 +228,9 @@ public class RobotState {
 
   public boolean isFlywheelOn() { return flywheelOn; }
   public void setFlywheelOn(boolean on) { flywheelOn = on; }
+
+  public boolean isSequencedShootingMode() { return sequencedShootingMode; }
+  public void setSequencedShootingMode(boolean on) { sequencedShootingMode = on; }
 
   public boolean isAutoShootMode() { return autoShootMode; }
   public void setAutoShootMode(boolean active) {
@@ -319,15 +341,56 @@ public class RobotState {
   public boolean getDeadZoneBeamBreak() { return deadZoneBeamBreak; }
 
   // Incremented when a ball exits toward the flywheels; decremented when one is pulled back.
+  // Routes to the correct segment based on current zone and phase.
   public void incrementBallsFed() {
     ballsFedCount++;
     SmartLogger.logReplay("RobotState/BallsFedCount", ballsFedCount);
+    if (shootingZone == ShootingZone.NEUTRAL) {
+      ballsPassed++;
+    } else {
+      MatchPhaseTracker.GamePhase phase = getGamePhase();
+      if (phase == MatchPhaseTracker.GamePhase.AUTO) {
+        ballsShotAuto++;
+      } else if (phase == MatchPhaseTracker.GamePhase.END_GAME) {
+        ballsShotEndgame++;
+      } else {
+        ballsShotTeleop++;
+      }
+    }
   }
+
   public void decrementBallsFed() {
     if (ballsFedCount > 0) ballsFedCount--;
     SmartLogger.logReplay("RobotState/BallsFedCount", ballsFedCount);
+    if (shootingZone == ShootingZone.NEUTRAL) {
+      if (ballsPassed > 0) ballsPassed--;
+    } else {
+      MatchPhaseTracker.GamePhase phase = getGamePhase();
+      if (phase == MatchPhaseTracker.GamePhase.AUTO) {
+        if (ballsShotAuto > 0) ballsShotAuto--;
+      } else if (phase == MatchPhaseTracker.GamePhase.END_GAME) {
+        if (ballsShotEndgame > 0) ballsShotEndgame--;
+      } else {
+        if (ballsShotTeleop > 0) ballsShotTeleop--;
+      }
+    }
   }
-  public int getBallsFedCount() { return ballsFedCount; }
+
+  public int getBallsFedCount()    { return ballsFedCount; }
+  public int getBallsShotAuto()    { return ballsShotAuto; }
+  public int getBallsShotTeleop()  { return ballsShotTeleop; }
+  public int getBallsShotEndgame() { return ballsShotEndgame; }
+  public int getBallsPassed()      { return ballsPassed; }
+  public int getBallsShotTotal()   { return ballsShotAuto + ballsShotTeleop + ballsShotEndgame; }
+
+  public void resetBallCounters() {
+    ballsFedCount    = 0;
+    ballsShotAuto    = 0;
+    ballsShotTeleop  = 0;
+    ballsShotEndgame = 0;
+    ballsPassed      = 0;
+    SmartLogger.logConsole("Ball counters reset", "BallCount");
+  }
 
   public void setClimberState(ClimberState climberState) {
     if (this.climberState == climberState) {

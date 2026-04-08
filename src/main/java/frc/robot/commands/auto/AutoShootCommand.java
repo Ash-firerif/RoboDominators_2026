@@ -7,7 +7,9 @@ import frc.robot.RobotState;
 import frc.robot.subsystems.IntakeSubsystem;
 import frc.robot.subsystems.SingulatorSubsystem;
 import frc.robot.subsystems.SpindexerSubsystem;
-import frc.robot.subsystems.turret.TurretSubsystem;
+import frc.robot.subsystems.turret.flywheel.Flywheel;
+import frc.robot.subsystems.turret.hood.Hood;
+import frc.robot.subsystems.turret.turret.Turret;
 import frc.robot.util.SmartLogger;
 
 // Runs continuously while auto shoot mode is active (set as singulator default command).
@@ -34,7 +36,9 @@ public class AutoShootCommand extends Command {
   private final RobotState robotState;
   private final SingulatorSubsystem singulatorSubsystem;
   private final SpindexerSubsystem spindexerSubsystem;
-  private final TurretSubsystem turretSubsystem;
+  private final Hood hood;
+  private final Flywheel flywheel;
+  private final Turret turret;
   private final IntakeSubsystem intakeSubsystem;
 
   private State state = State.IDLE;
@@ -47,12 +51,16 @@ public class AutoShootCommand extends Command {
       RobotState robotState,
       SingulatorSubsystem singulatorSubsystem,
       SpindexerSubsystem spindexerSubsystem,
-      TurretSubsystem turretSubsystem,
+      Hood hood,
+      Flywheel flywheel,
+      Turret turret,
       IntakeSubsystem intakeSubsystem) {
     this.robotState = robotState;
     this.singulatorSubsystem = singulatorSubsystem;
     this.spindexerSubsystem = spindexerSubsystem;
-    this.turretSubsystem = turretSubsystem;
+    this.hood = hood;
+    this.flywheel = flywheel;
+    this.turret = turret;
     this.intakeSubsystem = intakeSubsystem;
     addRequirements(singulatorSubsystem);
   }
@@ -72,7 +80,7 @@ public class AutoShootCommand extends Command {
 
     boolean ballPresent   = singulatorSubsystem.isBallPresent();
     boolean deadZone      = singulatorSubsystem.isDeadZoneBallPresent();
-    boolean onTarget      = turretSubsystem != null && turretSubsystem.isReadyToShoot();
+    boolean onTarget      = hood.isHoodOnTarget() && flywheel.isFlywheelOnTarget() && turret.isTurretOnTarget();
     boolean pauseShooting = robotState.isAutoShootPaused() || robotState.isShotSuppressed();
 
     switch (state) {

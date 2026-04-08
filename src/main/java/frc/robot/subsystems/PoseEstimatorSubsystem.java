@@ -383,6 +383,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     
     Pose2d currentPose = getEstimatedPose();
     robotState.setRobotPose(currentPose);
+    robotState.setRobotVelocity(driveSubsystem.getRobotRelativeSpeeds());
     
     // Update field pose every loop (required for Elastic Field widget)
     field.setRobotPose(currentPose);

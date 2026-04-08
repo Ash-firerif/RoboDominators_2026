@@ -1,13 +1,18 @@
 package frc.robot.commands.auto;
 
+import java.util.function.DoubleSupplier;
+
 import com.pathplanner.lib.auto.NamedCommands;
 import edu.wpi.first.wpilibj2.command.Commands;
 import frc.robot.Constants;
+import frc.robot.RobotState;
 import frc.robot.subsystems.ClimberSubsystem;
 import frc.robot.subsystems.IntakeSubsystem;
 import frc.robot.subsystems.SingulatorSubsystem;
 import frc.robot.subsystems.SpindexerSubsystem;
-import frc.robot.subsystems.turret.TurretSubsystem;
+import frc.robot.subsystems.turret.flywheel.Flywheel;
+import frc.robot.subsystems.turret.hood.Hood;
+import frc.robot.subsystems.turret.turret.Turret;
 
 // Registers PathPlanner named commands for use in .auto files.
 // Call register() once in RobotContainer before AutoBuilder.buildAutoChooser().
@@ -17,18 +22,20 @@ public final class AutoCommands {
     private AutoCommands() {}
 
     public static void register(
+            Hood hood,
+            Flywheel flywheel,
+            Turret turret,
             IntakeSubsystem intake,
-            TurretSubsystem turret,
             SpindexerSubsystem spindexer,
             SingulatorSubsystem singulator,
-            ClimberSubsystem climber) {
+            ClimberSubsystem climber,
+            RobotState robotState) {
 
         // --- Intake ---
         if (intake != null) {
-            // Deploy: extend arm and start pulling game pieces in
+            // Deploy: extend arm only — rollers stay off until explicitly started
             NamedCommands.registerCommand("IntakeDeploy", Commands.runOnce(() -> {
-                intake.extend();
-                intake.spinIn();
+                intake.extendOnly();
             }, intake));
 
             // Only spin if arm is fully extended — avoids ejecting inside the frame
@@ -60,60 +67,51 @@ public final class AutoCommands {
                 intake::agitate, intake));
         }
 
-        // --- Shoot ---
-        // ShootStart enables the fire interlock and starts the feed chain.
-        // ShootStop disables the interlock and drains the feed chain.
-        // Flywheel / hood / turret aim run continuously in TurretSubsystem — no command needed.
-        if (turret != null && spindexer != null && singulator != null) {
+        // ShootStart/ShootStop do not require turret — enableFire/disableFire are state flags only
+        // and must not interrupt the tracking default command.
+        if (spindexer != null && singulator != null) {
             NamedCommands.registerCommand("ShootStart", Commands.runOnce(() -> {
-                turret.enableFire();
                 spindexer.spinForward();
                 singulator.primeAndFeed();
-            }, turret, spindexer, singulator));
+            }, spindexer, singulator));
 
             NamedCommands.registerCommand("ShootStop", Commands.runOnce(() -> {
-                turret.disableFire();
                 spindexer.stop();
                 singulator.pause();
-            }, turret, spindexer, singulator));
+            }, spindexer, singulator));
         }
 
         // Flywheel spin-up / spin-down — call FlywheelsOn before ShootStart, FlywheelsOff after ShootStop.
         // Uses HUBCLOSE RPS targets as initial speed; aim pipeline overrides dynamically once tracking enabled.
         // TrackingEnable allows the aim pipeline to run — call once at auto start after turret is homed.
         if (turret != null) {
-            NamedCommands.registerCommand("TrackingEnable", Commands.runOnce(
-                turret::enableTracking, turret));
+            NamedCommands.registerCommand("FlywheelsOn", flywheel.runTrackTargetCommand());
 
-            NamedCommands.registerCommand("FlywheelsOn", Commands.runOnce(() -> {
-                turret.setFlywheelFrontRps(Constants.TurretTargets.HUBCLOSE_FRONT_RPS);
-                turret.setFlywheelBackRps(Constants.TurretTargets.HUBCLOSE_BACK_RPS);
-            }, turret));
-
-            NamedCommands.registerCommand("FlywheelsOff", Commands.runOnce(() ->
-                turret.setFlywheelPercent(0.0), turret));
+            NamedCommands.registerCommand("FlywheelsOff", flywheel.stopCommand());
         }
 
         // --- Meta commands (combinations for simple autos) ---
-        // AutoInit: enable tracking + spin up flywheels + deploy intake. Call at auto start, then wait for spin-up.
+        // AutoInit: set flywheelOn flag (default command picks it up next loop) + extend intake.
+        // Does not require turret — avoids interrupting the tracking default command.
         if (turret != null && intake != null) {
             NamedCommands.registerCommand("AutoInit", Commands.runOnce(() -> {
-                turret.enableTracking();
-                turret.setFlywheelFrontRps(Constants.TurretTargets.HUBCLOSE_FRONT_RPS);
-                turret.setFlywheelBackRps(Constants.TurretTargets.HUBCLOSE_BACK_RPS);
-                intake.extend();
-                intake.spinIn();
-            }, turret, intake));
+                robotState.setFlywheelOn(true);
+                intake.extendOnly();
+            }, intake));
+        } else if (turret != null) {
+            NamedCommands.registerCommand("AutoInit", Commands.runOnce(() -> {
+                robotState.setFlywheelOn(true);
+            }));
         }
 
         // AutoShootEnd: stop fire interlock, feed chain, and flywheels in one call.
+        // Does not require turret — avoids interrupting the tracking default command.
         if (turret != null && spindexer != null && singulator != null) {
             NamedCommands.registerCommand("AutoShootEnd", Commands.runOnce(() -> {
-                turret.disableFire();
-                turret.setFlywheelPercent(0.0);
+                robotState.setFlywheelOn(false);
                 spindexer.stop();
                 singulator.pause();
-            }, turret, spindexer, singulator));
+            }, spindexer, singulator));
         }
 
         // --- Climber ---
